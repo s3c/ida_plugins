@@ -13,6 +13,7 @@ import ida_nalt
 class CodeFinderChooser(ida_kernwin.Choose):
 
     selected_entries = []
+    entries = []
 
     def __init__(self, entries):
 
@@ -59,7 +60,7 @@ class CodeFinderChooser(ida_kernwin.Choose):
             popup_handle,
             "chooser_remove_all_entries",
             None,
-            ida_kernwin.SETMENU_APP
+            ida_kernwin.SETMENU_ENSURE_SEP
         )
 
         ida_kernwin.attach_action_to_popup(
