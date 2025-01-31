@@ -79,8 +79,12 @@ class CodeFinder(ida_idaapi.plugin_t):
     def init(self):
 
         self.cf_chooser = CodeFinderChooser()
+
         self.cf_bp_hook = DebugHook()
         self.cf_bp_hook.set_parent(self)
+
+        self.ui_hooks = UIHooks()
+        self.ui_hooks.set_parent(self)
 
         self.execution_count = 0
         self.image_base = ida_nalt.get_imagebase()
@@ -111,6 +115,7 @@ class CodeFinder(ida_idaapi.plugin_t):
 
     def run(self, arg):
 
+        self.ui_hooks.hook()
         self.cf_bp_hook.hook()
         self.cf_chooser.Show()
 
@@ -119,6 +124,7 @@ class CodeFinder(ida_idaapi.plugin_t):
         return ida_idaapi.PLUGIN_OK
 
     def term(self):
+
         print("[Code Finder] Plugin terminated")
 
     def update(self, entries):
@@ -158,7 +164,9 @@ class CodeFinder(ida_idaapi.plugin_t):
             new_bpt.flags = ida_dbg.BPT_ENABLED
             ida_dbg.update_bpt(new_bpt)
 
-    def remove_breakpoints(self, entries):
+    def remove_breakpoints(self, entries = None):
+        if not entries:
+            entries = range(len(self.entries))
         for entry in entries:
             ida_dbg.del_bpt(int(self.entries[entry][1], 16))
 
@@ -172,7 +180,7 @@ class CodeFinder(ida_idaapi.plugin_t):
         else:
             selected_name = self.dropdown_chooser(valid_states)
             self.state_name = valid_states[selected_name]
-        self.remove_breakpoints(range(len(self.entries)))
+        self.remove_breakpoints()
         self.update(copy.deepcopy(self.states[self.state_name]["entries"]))
         self.image_base = self.states[self.state_name]["image_base"]
         self.process_relocations()
@@ -188,8 +196,8 @@ class CodeFinder(ida_idaapi.plugin_t):
     def save_state_as(self):
         new_state_name = ida_kernwin.ask_str("", 0, "Save state as ")
         self.states[new_state_name] = {"entries": copy.deepcopy(self.entries), "image_base": self.image_base}
-        self.state_name = new_state_name
         self.netnode.setblob(pickle.dumps(self.states), 0, "B")
+        self.state_name = new_state_name
 
     def delete_state(self):
         if not self.state_name:
@@ -197,7 +205,7 @@ class CodeFinder(ida_idaapi.plugin_t):
             return
         del self.states[self.state_name]
         self.netnode.setblob(pickle.dumps(self.states), 0, "B")
-        self.remove_breakpoints(range(len(self.entries)))
+        self.remove_breakpoints()
         self.state_name = ""
         self.update([])
 
@@ -216,7 +224,7 @@ class CodeFinder(ida_idaapi.plugin_t):
         for func_index in range(ida_funcs.get_func_qty()):
             func = ida_funcs.getn_func(func_index)
             new_entries.append([ida_funcs.get_func_name(func.start_ea), hex(func.start_ea), "False", "", ""])
-        self.remove_breakpoints(range(len(self.entries)))
+        self.remove_breakpoints()
         self.update(new_entries)
         self.set_breakpoints()
         print(f"[Code Finder] Starting function search with {len(new_entries)} entries")
@@ -236,13 +244,13 @@ class CodeFinder(ida_idaapi.plugin_t):
                 if entry_name != block_name:
                     entry_name += (":" + block_name) if block_name else f"+{block.start_ea-func.start_ea:x}"
                 new_entries.append([entry_name, hex(block.start_ea), "False", "", ""])
-        self.remove_breakpoints(range(len(self.entries)))
+        self.remove_breakpoints()
         self.update(new_entries)
         self.set_breakpoints()
         print(f"[Code Finder] Starting block search with {len(new_entries)} blocks")
 
     def remove_all_entries(self):
-        self.remove_breakpoints(range(len(self.entries)))
+        self.remove_breakpoints()
         self.update([])
         print("[Code Finder] Removing all entries")
 
@@ -435,6 +443,14 @@ class DebugHook(ida_dbg.DBG_Hooks):
     def dbg_process_start(self, pid, tid, ea, modinfo_name, modinfo_base, modinfo_size):
         self.code_finder.dbg_process_start()
         return True
+
+    def set_parent(self, code_finder):
+        self.code_finder = code_finder
+
+class UIHooks(ida_kernwin.UI_Hooks):
+    def saving(self):
+        self.code_finder.remove_breakpoints()
+        return super().saving()
 
     def set_parent(self, code_finder):
         self.code_finder = code_finder
