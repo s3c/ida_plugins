@@ -1,11 +1,14 @@
 import ida_kernwin
+import ida_netnode
 import ida_idaapi
 import ida_funcs
 import ida_name
+import ida_nalt
 import ida_gdl
 import ida_dbg
 import ida_idd
-import ida_nalt
+import pickle
+import copy
 
 class CodeFinderChooser(ida_kernwin.Choose):
 
@@ -75,13 +78,20 @@ class CodeFinder(ida_idaapi.plugin_t):
 
     def init(self):
 
-        self.image_base = ida_nalt.get_imagebase()
         self.cf_chooser = CodeFinderChooser()
         self.cf_bp_hook = DebugHook()
         self.cf_bp_hook.set_parent(self)
 
         self.execution_count = 0
+        self.image_base = ida_nalt.get_imagebase()
+        self.state_name = ""
         self.entries = []
+        self.states = {}
+
+        self.netnode = ida_netnode.netnode("CodeFinderNode", 0, True)
+        netnode_blob = self.netnode.getblob(0, "B")
+        if netnode_blob:
+            self.states = pickle.loads(netnode_blob)
 
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_start_function_search","Start Function Search", ChooserStartFunctionSearch(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_start_block_search","Start Block Search", ChooserStartBlockSearch(self)))
@@ -153,18 +163,40 @@ class CodeFinder(ida_idaapi.plugin_t):
             ida_dbg.del_bpt(int(self.entries[entry][1], 16))
 
     def load_state(self):
-        self.dropdown_chooser(["1", "2", "3"])
-        #also load image base
-        pass
+        valid_states = [name for name in self.states]
+        if not valid_states:
+            print("[Code Finder] No states to load")
+            return
+        elif len(valid_states) == 1:
+            self.state_name = valid_states[0]
+        else:
+            selected_name = self.dropdown_chooser(valid_states)
+            self.state_name = valid_states[selected_name]
+        self.update(copy.deepcopy(self.states[self.state_name]["entries"]))
+        self.image_base = self.states[self.state_name]["image_base"]
+        self.process_relocations()
 
     def save_state(self):
-        pass
+        if not self.state_name:
+            self.save_state_as()
+            return
+        self.states[self.state_name] = {"entries": copy.deepcopy(self.entries), "image_base": self.image_base}
+        self.netnode.setblob(pickle.dumps(self.states), 0, "B")
 
-    def save_state_as(self, name):
-        state_name = ida_kernwin.ask_str("Default", 0, "Save entries state as")
+    def save_state_as(self):
+        new_state_name = ida_kernwin.ask_str("", 0, "Save state as ")
+        self.states[new_state_name] = {"entries": copy.deepcopy(self.entries), "image_base": self.image_base}
+        self.state_name = new_state_name
+        self.netnode.setblob(pickle.dumps(self.states), 0, "B")
 
     def delete_state(self):
-        pass
+        if not self.state_name:
+            print("[Code Finder] No state to delete")
+            return
+        del self.states[self.state_name]
+        self.netnode.setblob(pickle.dumps(self.states), 0, "B")
+        self.state_name = ""
+        self.update([])
 
     def dropdown_chooser(self, options):
         load_form = DropdownFormLoad(options)
@@ -252,7 +284,11 @@ class CodeFinder(ida_idaapi.plugin_t):
         self.execution_count = 0
 
     def set_comment(self):
-        pass
+        comment_entries = self.cf_chooser.GetSelectedEntries()
+        comment = ida_kernwin.ask_str("", 0, "Set comment")
+        for comment_entry in comment_entries:
+            self.entries[comment_entry][4] = comment
+        self.cf_chooser.Update(self.entries)
 
 class ChooserStartFunctionSearch(ida_kernwin.action_handler_t):
 
