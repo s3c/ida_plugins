@@ -172,6 +172,7 @@ class CodeFinder(ida_idaapi.plugin_t):
         else:
             selected_name = self.dropdown_chooser(valid_states)
             self.state_name = valid_states[selected_name]
+        self.remove_breakpoints(range(len(self.entries)))
         self.update(copy.deepcopy(self.states[self.state_name]["entries"]))
         self.image_base = self.states[self.state_name]["image_base"]
         self.process_relocations()
@@ -196,6 +197,7 @@ class CodeFinder(ida_idaapi.plugin_t):
             return
         del self.states[self.state_name]
         self.netnode.setblob(pickle.dumps(self.states), 0, "B")
+        self.remove_breakpoints(range(len(self.entries)))
         self.state_name = ""
         self.update([])
 
