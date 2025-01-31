@@ -175,6 +175,7 @@ class CodeFinder(ida_idaapi.plugin_t):
         self.update(copy.deepcopy(self.states[self.state_name]["entries"]))
         self.image_base = self.states[self.state_name]["image_base"]
         self.process_relocations()
+        self.set_breakpoints()
 
     def save_state(self):
         if not self.state_name:
@@ -221,8 +222,9 @@ class CodeFinder(ida_idaapi.plugin_t):
     def start_block_search(self):
         new_entries = []
         block_cache = []
-        for func_index in range(ida_funcs.get_func_qty()):
-            func = ida_funcs.getn_func(func_index)
+        selected_entries = self.cf_chooser.GetSelectedEntries()
+        for selected_entry in selected_entries:
+            func = ida_funcs.get_func(int(self.entries[selected_entry][1], 16))
             for block in ida_gdl.FlowChart(func):
                 entry_name = ida_funcs.get_func_name(func.start_ea)
                 block_name = ida_name.get_ea_name(block.start_ea)
