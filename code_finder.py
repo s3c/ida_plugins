@@ -16,10 +16,11 @@ class CodeFinderChooser(ida_kernwin.Choose):
 
         super().__init__(
             "Code Finder",
-            [["Name", 20], ["Address", 20], ["Executed", 10], ["Execution Index", 10], ["Comment", 10]],
+            [["Name", 20], ["Address", 20], ["Executed", 10], ["Execution Index", 10], ["Execution Count", 10], ["Comment", 30]],
             flags = ida_kernwin.CH_MULTI | ida_kernwin.CH_KEEP
         )
 
+        self.execution_count_enabled = False
         self.selected_entries = []
         self.entries = []
 
@@ -47,7 +48,14 @@ class CodeFinderChooser(ida_kernwin.Choose):
         ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_save_state", None, ida_kernwin.SETMENU_APP)
         ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_save_state_as", None, ida_kernwin.SETMENU_APP)
         ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_delete_state", None, ida_kernwin.SETMENU_APP)
-        ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_set_comment", None, ida_kernwin.SETMENU_ENSURE_SEP)
+
+        ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_clear_execution_count", None, ida_kernwin.SETMENU_ENSURE_SEP)
+        if self.execution_count_enabled:
+            ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_disable_execution_count", None, ida_kernwin.SETMENU_APP)
+        else:
+            ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_enable_execution_count", None, ida_kernwin.SETMENU_APP)
+
+        ida_kernwin.attach_action_to_popup(widget, popup_handle, "chooser_set_comment", None, ida_kernwin.SETMENU_APP)
 
     def Update(self, entries):
         self.entries = entries
@@ -55,6 +63,9 @@ class CodeFinderChooser(ida_kernwin.Choose):
 
     def GetSelectedEntries(self):
         return self.selected_entries
+
+    def SetExecutionCount(self, status):
+        self.execution_count_enabled = status
 
 class DropdownFormLoad(ida_kernwin.Form):
 
@@ -78,15 +89,17 @@ class CodeFinder(ida_idaapi.plugin_t):
 
     def init(self):
 
+        self.execution_count_enabled = False
+
         self.cf_chooser = CodeFinderChooser()
 
-        self.cf_bp_hook = DebugHook()
-        self.cf_bp_hook.set_parent(self)
+        self.cf_bp_hooks = DebugHooks()
+        self.cf_bp_hooks.set_parent(self)
 
-        self.ui_hooks = UIHooks()
-        self.ui_hooks.set_parent(self)
+        self.cf_ui_hooks = UIHooks()
+        self.cf_ui_hooks.set_parent(self)
 
-        self.execution_count = 0
+        self.execution_index = 0
         self.image_base = ida_nalt.get_imagebase()
         self.state_name = ""
         self.entries = []
@@ -98,7 +111,7 @@ class CodeFinder(ida_idaapi.plugin_t):
             self.states = pickle.loads(netnode_blob)
 
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_start_function_search","Start Function Search", ChooserStartFunctionSearch(self)))
-        ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_start_block_search","Start Block Search", ChooserStartBlockSearch(self)))
+        ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_start_block_search","Start Block Search From Selected", ChooserStartBlockSearch(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_remove_all_entries","Remove All Entries", ChooserRemoveAllEntries(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_remove_selected_entries","Remove Selected Entries", ChooserRemoveSelectedEntries(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_remove_executed_entries","Remove Executed Entries", ChooserRemoveExecutedEntries(self)))
@@ -107,6 +120,9 @@ class CodeFinder(ida_idaapi.plugin_t):
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_save_state","Save State", ChooserSaveState(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_save_state_as","Save State as", ChooserSaveStateAs(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_delete_state", "Delete State", ChooserDeleteState(self)))
+        ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_clear_execution_count", "Clear Execution Count", ChooserClearExecutionCount(self)))
+        ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_enable_execution_count", "Enable Execution Count", ChooserEnableExecutionCount(self)))
+        ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_disable_execution_count", "Disable Execution Count", ChooserDisableExecutionCount(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_set_comment", "Set Comment", ChooserSetComment(self)))
 
         print("[Code Finder] Plugin initialized")
@@ -115,8 +131,8 @@ class CodeFinder(ida_idaapi.plugin_t):
 
     def run(self, arg):
 
-        self.ui_hooks.hook()
-        self.cf_bp_hook.hook()
+        self.cf_ui_hooks.hook()
+        self.cf_bp_hooks.hook()
         self.cf_chooser.Show()
 
         print("[Code Finder] Plugin executed")
@@ -131,9 +147,9 @@ class CodeFinder(ida_idaapi.plugin_t):
         self.entries = entries
         self.cf_chooser.Update(self.entries)
 
-    def next_execution_count(self):
-        self.execution_count += 1
-        return self.execution_count
+    def next_execution_index(self):
+        self.execution_index += 1
+        return self.execution_index
 
     def process_relocations(self):
         new_base = ida_nalt.get_imagebase()
@@ -152,7 +168,7 @@ class CodeFinder(ida_idaapi.plugin_t):
                 else:
                     func_address = ida_name.get_name_ea(0, func_name)
                     new_name = func_name + ((":" + block_name) if block_name else f"+{new_address-func_address:x}")
-                updated_entries.append([new_name, hex(new_address), entry[2], "", ""])
+                updated_entries.append([new_name, hex(new_address), entry[2], "", "", ""])
             self.update(updated_entries)
             self.image_base = new_base
 
@@ -223,7 +239,7 @@ class CodeFinder(ida_idaapi.plugin_t):
         new_entries = []
         for func_index in range(ida_funcs.get_func_qty()):
             func = ida_funcs.getn_func(func_index)
-            new_entries.append([ida_funcs.get_func_name(func.start_ea), hex(func.start_ea), "False", "", ""])
+            new_entries.append([ida_funcs.get_func_name(func.start_ea), hex(func.start_ea), "False", "", "", ""])
         self.remove_breakpoints()
         self.update(new_entries)
         self.set_breakpoints()
@@ -243,16 +259,11 @@ class CodeFinder(ida_idaapi.plugin_t):
                 block_cache.append(block_name)
                 if entry_name != block_name:
                     entry_name += (":" + block_name) if block_name else f"+{block.start_ea-func.start_ea:x}"
-                new_entries.append([entry_name, hex(block.start_ea), "False", "", ""])
+                new_entries.append([entry_name, hex(block.start_ea), "False", "", "", ""])
         self.remove_breakpoints()
         self.update(new_entries)
         self.set_breakpoints()
         print(f"[Code Finder] Starting block search with {len(new_entries)} blocks")
-
-    def remove_all_entries(self):
-        self.remove_breakpoints()
-        self.update([])
-        print("[Code Finder] Removing all entries")
 
     def remove_selected_entries(self):
         new_entries = []
@@ -282,25 +293,43 @@ class CodeFinder(ida_idaapi.plugin_t):
         self.update(executed_entries)
         print(f"[Code Finder] Removing {len(unexecuted_entries)} unexecuted entries")
 
+    def clear_execution_count(self):
+        for entry in self.entries:
+            entry[4] = ""
+        self.cf_chooser.Refresh()
+
+    def enable_execution_count(self):
+        self.execution_count_enabled = True
+        self.cf_chooser.SetExecutionCount(True)
+
+    def disable_execution_count(self):
+        self.execution_count_enabled = False
+        self.cf_chooser.SetExecutionCount(False)
+
     def dbg_bpt(self, ea):
         for entry in self.entries:
             if entry[1] == hex(ea):
                 entry[2] = "True"
-                entry[3] = str(self.next_execution_count())
-                ida_dbg.disable_bpt(ea)
+                entry[3] = str(self.next_execution_index())
+                if self.execution_count_enabled:
+                    entry[4] = str(int(entry[4]) + 1) if entry[4] else "1"
+                else:
+                    ida_dbg.disable_bpt(ea)
+                self.cf_chooser.Refresh()
 
     def dbg_process_start(self):
         self.process_relocations()
         for entry in self.entries:
             entry[3] = ""
-        self.execution_count = 0
+        self.cf_chooser.Refresh()
+        self.execution_index = 0
 
     def set_comment(self):
         comment_entries = self.cf_chooser.GetSelectedEntries()
         comment = ida_kernwin.ask_str("", 0, "Set comment")
         for comment_entry in comment_entries:
-            self.entries[comment_entry][4] = comment
-        self.cf_chooser.Update(self.entries)
+            self.entries[comment_entry][5] = comment
+        self.cf_chooser.Refresh()
 
 class ChooserStartFunctionSearch(ida_kernwin.action_handler_t):
 
@@ -332,7 +361,8 @@ class ChooserRemoveAllEntries(ida_kernwin.action_handler_t):
         self.code_finder = code_finder
 
     def activate(self, ctx):
-        self.code_finder.remove_all_entries()
+        self.code_finder.remove_breakpoints()
+        self.code_finder.update([])
         return 1
 
     def update(self, ctx):
@@ -434,7 +464,43 @@ class ChooserSetComment(ida_kernwin.action_handler_t):
     def update(self, ctx):
         return ida_kernwin.AST_ENABLE_ALWAYS
 
-class DebugHook(ida_dbg.DBG_Hooks):
+class ChooserEnableExecutionCount(ida_kernwin.action_handler_t):
+
+    def __init__(self, code_finder):
+        self.code_finder = code_finder
+
+    def activate(self, ctx):
+        self.code_finder.enable_execution_count()
+        return 1
+
+    def update(self, ctx):
+        return ida_kernwin.AST_ENABLE_ALWAYS
+
+class ChooserDisableExecutionCount(ida_kernwin.action_handler_t):
+
+    def __init__(self, code_finder):
+        self.code_finder = code_finder
+
+    def activate(self, ctx):
+        self.code_finder.disable_execution_count()
+        return 1
+
+    def update(self, ctx):
+        return ida_kernwin.AST_ENABLE_ALWAYS
+
+class ChooserClearExecutionCount(ida_kernwin.action_handler_t):
+
+    def __init__(self, code_finder):
+        self.code_finder = code_finder
+
+    def activate(self, ctx):
+        self.code_finder.clear_execution_count()
+        return 1
+
+    def update(self, ctx):
+        return ida_kernwin.AST_ENABLE_ALWAYS
+
+class DebugHooks(ida_dbg.DBG_Hooks):
 
     def dbg_bpt(self, tid, ea):
         self.code_finder.dbg_bpt(ea)
