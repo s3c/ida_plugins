@@ -1,5 +1,3 @@
-from Crypto.SelfTest.Cipher.test_CFB import new_func
-
 import ida_kernwin
 import ida_netnode
 import ida_idaapi
@@ -15,13 +13,11 @@ import copy
 class CodeFilterChooser(ida_kernwin.Choose):
 
     def __init__(self):
-
         super().__init__(
             "Code Filter",
             [["Name", 20], ["Address", 20], ["Executed", 10], ["Execution Index", 10], ["Execution Count", 10], ["Comment", 30]],
             flags = ida_kernwin.CH_MULTI | ida_kernwin.CH_KEEP
         )
-
         self.execution_count_enabled = False
         self.entries = []
 
@@ -35,7 +31,6 @@ class CodeFilterChooser(ida_kernwin.Choose):
         ida_kernwin.jumpto(int(self.entries[n[0]][1], 16))
 
     def OnPopup(self, widget, popup_handle):
-
         ida_kernwin.attach_action_to_popup(widget, popup_handle,"chooser_start_function_search",None, ida_kernwin.SETMENU_APP)
         ida_kernwin.attach_action_to_popup(widget, popup_handle,"chooser_start_block_search",None, ida_kernwin.SETMENU_APP)
         ida_kernwin.attach_action_to_popup(widget, popup_handle,"chooser_remove_all_entries",None, ida_kernwin.SETMENU_ENSURE_SEP)
@@ -65,25 +60,22 @@ class CodeFilterChooser(ida_kernwin.Choose):
 class DropdownFormLoad(ida_kernwin.Form):
 
     def __init__(self, options):
-
         form_layout = "STARTITEM 0\n" \
                       "BUTTON YES* Load\n" \
                       "BUTTON CANCEL Cancel\n" \
                       "Load State\n" \
                       "<State :{cbDropdown}>"
-
         ida_kernwin.Form.__init__(self, form_layout, {'cbDropdown': ida_kernwin.Form.DropdownListControl(items=options)})
 
 class CodeFilter(ida_idaapi.plugin_t):
 
     flags = ida_idaapi.PLUGIN_MOD
-    comment = "This plugin implements functionality similar to cheat engine's code block finding"
+    comment = "This plugin implements functionality similar to cheat engine's code filter"
     help = "Plugin that uses breakpoints to find executed and non executed functions or blocks"
     wanted_name = "Code Filter"
     wanted_hotkey = "Ctrl-Shift-C"
 
     def init(self):
-
         self.execution_count_enabled = False
 
         self.cf_chooser = CodeFilterChooser()
@@ -120,24 +112,18 @@ class CodeFilter(ida_idaapi.plugin_t):
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_enable_execution_count", "Enable Execution Count", ChooserEnableExecutionCount(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_disable_execution_count", "Disable Execution Count", ChooserDisableExecutionCount(self)))
         ida_kernwin.register_action(ida_kernwin.action_desc_t("chooser_set_comment", "Set Comment", ChooserSetComment(self)))
-
         ida_kernwin.register_action(ida_kernwin.action_desc_t("function_window_add_function", "Add To Code Filter", FunctionWindowAddToCodeFilter(self)))
 
         print("[Code Filter] Plugin initialized")
-
         return ida_idaapi.PLUGIN_KEEP
 
     def run(self, arg):
-
         self.cf_bp_hooks.hook()
         self.cf_chooser.Show()
-
         print("[Code Filter] Plugin executed")
-
         return ida_idaapi.PLUGIN_OK
 
     def term(self):
-
         print("[Code Filter] Plugin terminated")
 
     def update(self, entries):
@@ -534,6 +520,14 @@ class DebugHooks(ida_dbg.DBG_Hooks):
         self.code_filter = code_filter
 
 class UIHooks(ida_kernwin.UI_Hooks):
+
+    def create_desktop_widget(self, ttl, cfg):
+        print(f"[Code Filter] Creating desktop widget with title {ttl}")
+        #if ttl == "Code Filter":
+        #    self.code_filter.cf_chooser = CodeFilterChooser()
+        #    self.code_filter.cf_chooser.Show()
+        #    return self.code_filter.cf_chooser
+
 
     def finish_populating_widget_popup(self, widget, popup, ctx):
         if ctx.widget_type == ida_kernwin.BWN_FUNCS:
